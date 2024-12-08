@@ -1,9 +1,11 @@
 import logging
 import os
+import threading
 from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
 from telegram import Update
 import sqlite3
 import requests
+from flask import Flask
 
 # Включаем логирование
 logging.basicConfig(
@@ -46,6 +48,17 @@ CREATE TABLE IF NOT EXISTS known_users (
 )
 """)
 conn.commit()
+
+# Инициализация Flask приложения
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
 def is_admin_in_group(context: CallbackContext, user_id: int, group_id: int) -> bool:
     try:
@@ -186,10 +199,10 @@ def status_command(update: Update, context: CallbackContext):
 
     cursor.execute("SELECT user_id, username FROM known_users WHERE group_id = ?", (GROUP_CHAT_ID,))
     known = cursor.fetchall()
-    known_ids = [k[0] for k in known]
+    known_ids = [k['user_id'] for k in known]
 
     cursor.execute("SELECT user_id FROM users WHERE group_id = ? AND ton_address IS NOT NULL", (GROUP_CHAT_ID,))
-    verified_users = [v[0] for v in cursor.fetchall()]
+    verified_users = [v['user_id'] for v in cursor.fetchall()]
 
     not_verified_users = [k for k in known_ids if k not in verified_users]
 
@@ -201,8 +214,8 @@ def status_command(update: Update, context: CallbackContext):
     for user_id in not_verified_users:
         cursor.execute("SELECT username FROM known_users WHERE user_id=? AND group_id=?", (user_id, GROUP_CHAT_ID))
         row = cursor.fetchone()
-        if row and row[0]:
-            mentions.append(f"@{row[0]}")
+        if row and row['username']:
+            mentions.append(f"@{row['username']}")
 
     if mentions:
         msg += "Не верифицированы:\n" + " ".join(mentions)
@@ -279,8 +292,8 @@ def check_balances(context: CallbackContext):
     cursor.execute("SELECT ton_address, user_id FROM users WHERE group_id = ?", (GROUP_CHAT_ID,))
     wallets = cursor.fetchall()
     for wallet in wallets:
-        ton_address = wallet[0]
-        user_id = wallet[1]
+        ton_address = wallet['ton_address']
+        user_id = wallet['user_id']
         balance_ok = check_balance_for_user(ton_address)
         if balance_ok:
             logger.info(f"Balance OK for wallet {ton_address}")
@@ -306,6 +319,12 @@ def error_handler(update: Update, context: CallbackContext):
         logger.error(f"Error sending error message to admin: {e}")
 
 def main():
+    # Запуск Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # Запуск Telegram бота
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
