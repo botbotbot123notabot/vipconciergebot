@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Ваш Telegram Bot Token
 TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"  # Ваш TonAPI Key
 JETTON_ROOT_ADDRESS = "0:ed0e88ca21680966f2bb329231da7bfa43a114279c1495dbdcc2546e1853a11b"  # Ваш Jetton Root Address в raw формате
-MIN_TOKEN_AMOUNT = 10000000  # Минимальное количество токенов
+MIN_TOKEN_AMOUNT = 600  # Минимальное количество токенов
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
 INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"  # Ваша ссылка для вступления
 ADMIN_CHAT_ID = 687198654  # Замените на ваш Telegram ID для получения уведомлений об ошибках
@@ -312,19 +312,6 @@ def main():
     # Добавляем обработчик ошибок
     dp.add_error_handler(error_handler)
 
-    # Устанавливаем Webhook (для Koyeb)
-    # Замените 'your-koyeb-app.koyeb.app' на фактический URL вашего приложения на Koyeb
-    KOYEB_APP_URL = "https://your-koyeb-app.koyeb.app"  # Замените на ваш URL
-    webhook_url = f"{KOYEB_APP_URL}/{TOKEN}"
-
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get('PORT', 8443)),
-        url_path=TOKEN
-    )
-    updater.bot.set_webhook(webhook_url)
-    logger.info(f"Webhook set to {webhook_url}")
-
     # Добавляем хендлеры
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("addwallet", addwallet))
@@ -339,8 +326,9 @@ def main():
     job_queue = updater.job_queue
     job_queue.run_repeating(check_balances, interval=1800, first=10)  # каждые 30 минут
 
-    # Запуск Webhook
-    logger.info("Bot started with Webhook.")
+    # Запуск Polling
+    updater.start_polling()
+    logger.info("Bot started with Polling.")
     updater.idle()
 
 if __name__ == '__main__':
