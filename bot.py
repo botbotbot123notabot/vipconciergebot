@@ -1,18 +1,25 @@
+import logging
 from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
 from telegram import Update
 import sqlite3
 import requests
-import time
 
+# Включаем логирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Конфигурация
 TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Замените на ваш токен
-TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732" # Ваш Toncenter API ключ
-# Используем JETTON_ROOT_ADDRESS из вашего примера ответа. Замените при необходимости.
-JETTON_ROOT_ADDRESS = "0:F791C89405D4F0D146E10320523604E730FBCB5B6493D3FC3BCE80D8B9A54280"
-MIN_TOKEN_AMOUNT = 10000000
+TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"  # Ваш Toncenter API ключ
+JETTON_ROOT_ADDRESS = "0:F791C89405D4F0D146E10320523604E730FBCB5B6493D3FC3BCE80D8B9A54280"  # Корректный jetton root address
+MIN_TOKEN_AMOUNT = 10000000  # 10,000,000 токенов
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
 INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"  # Ваша ссылка для вступления
 
-# Подключение к SQLite (данные потеряются после редеплоя на эфемерном хостинге)
+# Подключение к SQLite (на Heroku данные не сохраняются)
 conn = sqlite3.connect('users.db', check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -38,10 +45,13 @@ CREATE TABLE IF NOT EXISTS known_users (
 conn.commit()
 
 def is_admin_in_group(context: CallbackContext, user_id: int, group_id: int) -> bool:
-    admins = context.bot.get_chat_administrators(group_id)
-    for a in admins:
-        if a.user.id == user_id:
-            return True
+    try:
+        admins = context.bot.get_chat_administrators(group_id)
+        for a in admins:
+            if a.user.id == user_id:
+                return True
+    except Exception as e:
+        logger.error(f"Error checking admin status: {e}")
     return False
 
 def start(update: Update, context: CallbackContext):
@@ -66,6 +76,8 @@ def addwallet(update: Update, context: CallbackContext):
     wallet = context.args[0]
     user_id = update.message.from_user.id
     username = update.message.from_user.username or update.message.from_user.first_name
+
+    logger.info(f"Adding/updating wallet for user_id={user_id}: {wallet}")
 
     cursor.execute("""
     INSERT OR REPLACE INTO users (user_id, group_id, ton_address, warning_time, last_balance, username)
@@ -113,8 +125,6 @@ def check_command(update: Update, context: CallbackContext):
         update.message.reply_text("Баланс ниже минимального. Пополните и попробуйте ещё раз.")
 
 def check_balance_for_user(owner_address: str) -> bool:
-    # Если ваш адрес в base64 (UQ...) формате, возможно нужно конвертировать его в формtat "0:<HEX>"
-    # Попытайтесь использовать owner_address как есть. Если Toncenter не найдёт кошелек, нужно конвертировать адрес.
     url = "https://toncenter.com/api/v3/jetton/wallets"
     params = {
         "jetton": JETTON_ROOT_ADDRESS,
@@ -122,18 +132,32 @@ def check_balance_for_user(owner_address: str) -> bool:
         "limit": 1,
         "api_key": TON_API_KEY
     }
-    r = requests.get(url, params=params, timeout=10)
-    data = r.json()
+    logger.info(f"Fetching balance for owner_address={owner_address} and jetton={JETTON_ROOT_ADDRESS}")
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        logger.info(f"Received response from Toncenter: {data}")
+    except requests.RequestException as e:
+        logger.error(f"Error fetching balance for {owner_address}: {e}")
+        return False
 
     jetton_wallets = data.get("jetton_wallets", [])
     if not jetton_wallets:
+        logger.info(f"No jetton wallets found for owner {owner_address}")
         return False
 
     raw_balance_str = jetton_wallets[0].get("balance", "0")
-    raw_balance = int(raw_balance_str)
-    decimals = 9
+    try:
+        raw_balance = int(raw_balance_str)
+    except ValueError:
+        logger.error(f"Invalid balance format: {raw_balance_str}")
+        return False
+
+    decimals = 9  # Проверьте, что это правильное значение для вашего jetton
     balance = raw_balance / (10**decimals)
 
+    logger.info(f"Owner {owner_address} has balance: {balance} tokens")
     return balance >= MIN_TOKEN_AMOUNT
 
 def status_command(update: Update, context: CallbackContext):
@@ -141,10 +165,16 @@ def status_command(update: Update, context: CallbackContext):
         update.message.reply_text("У вас нет прав для этой команды.")
         return
 
-    total_count = context.bot.get_chat_member_count(GROUP_CHAT_ID)
+    try:
+        total_count = context.bot.get_chat_member_count(GROUP_CHAT_ID)
+        logger.info(f"Total members in group {GROUP_CHAT_ID}: {total_count}")
+    except Exception as e:
+        logger.error(f"Error getting chat member count: {e}")
+        total_count = "Unknown"
+
     cursor.execute("SELECT COUNT(*) FROM users WHERE group_id = ? AND ton_address IS NOT NULL", (GROUP_CHAT_ID,))
     verified_count = cursor.fetchone()[0]
-    not_verified_count = total_count - verified_count
+    not_verified_count = total_count - verified_count if isinstance(total_count, int) else "Unknown"
 
     cursor.execute("SELECT user_id, username FROM known_users WHERE group_id = ?", (GROUP_CHAT_ID,))
     known = cursor.fetchall()
@@ -189,11 +219,14 @@ def debug_command(update: Update, context: CallbackContext):
     else:
         report.append("TON API ключ: ОШИБКА")
 
-    r = requests.get("https://toncenter.com/api/v3/masterchainInfo", params={"api_key": TON_API_KEY}, timeout=5)
-    if r.status_code == 200:
-        report.append("Toncenter API доступ: OK")
-    else:
-        report.append(f"Toncenter API доступ: ОШИБКА код {r.status_code}")
+    try:
+        r = requests.get("https://toncenter.com/api/v3/masterchainInfo", params={"api_key": TON_API_KEY}, timeout=5)
+        if r.status_code == 200:
+            report.append("Toncenter API доступ: OK")
+        else:
+            report.append(f"Toncenter API доступ: ОШИБКА код {r.status_code}")
+    except Exception as e:
+        report.append(f"Toncenter API доступ: ОШИБКА {e}")
 
     if all("OK" in x for x in report):
         report.append("Работа стабильна и все хорошо!")
@@ -210,6 +243,7 @@ def new_member_handler(update: Update, context: CallbackContext):
         if not cursor.fetchone():
             cursor.execute("INSERT INTO known_users (user_id, group_id, username) VALUES (?,?,?)", (user_id, GROUP_CHAT_ID, username))
             conn.commit()
+            logger.info(f"Added new known user: {username} (ID: {user_id})")
 
 def faq_handler(update: Update, context: CallbackContext):
     if update.effective_chat.type == 'private':
@@ -233,18 +267,31 @@ def faq_handler(update: Update, context: CallbackContext):
         )
 
 def check_balances(context: CallbackContext):
-    pass
-
-def delete_webhook_before_polling(updater):
-    updater.bot.delete_webhook()
+    # Периодическая проверка балансов пользователей
+    cursor.execute("SELECT ton_address FROM users WHERE group_id = ?", (GROUP_CHAT_ID,))
+    wallets = cursor.fetchall()
+    for (wallet,) in wallets:
+        balance_ok = check_balance_for_user(wallet)
+        if balance_ok:
+            # Найдено достаточное количество токенов, отправить уведомление (можно настроить)
+            logger.info(f"Balance OK for wallet {wallet}")
+            # Здесь можно реализовать отправку уведомления пользователю
+        else:
+            logger.info(f"Balance insufficient for wallet {wallet}")
+            # Здесь можно реализовать отправку предупреждения пользователю
 
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
     # Удаляем вебхук, если он был установлен, чтобы избежать conflict
-    updater.bot.delete_webhook()
+    try:
+        updater.bot.delete_webhook()
+        logger.info("Webhook deleted successfully.")
+    except Exception as e:
+        logger.error(f"Error deleting webhook: {e}")
 
+    # Добавляем хендлеры
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("addwallet", addwallet))
     dp.add_handler(CommandHandler("check", check_command))
@@ -254,10 +301,13 @@ def main():
     dp.add_handler(MessageHandler(Filters.chat(GROUP_CHAT_ID) & Filters.all, new_member_handler))
     dp.add_handler(MessageHandler(Filters.private & Filters.text & ~Filters.command, faq_handler))
 
+    # Запуск job_queue для периодической проверки балансов
     job_queue = updater.job_queue
-    job_queue.run_repeating(check_balances, interval=1800, first=10)
+    job_queue.run_repeating(check_balances, interval=1800, first=10)  # каждые 30 минут
 
+    # Запуск polling
     updater.start_polling()
+    logger.info("Bot started polling.")
     updater.idle()
 
 if __name__ == '__main__':
