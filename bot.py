@@ -4,16 +4,15 @@ import sqlite3
 import requests
 import time
 
-# Конфигурация
 TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Замените на ваш токен
-TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732" # Замените на ваш ключ
-JETTON_ROOT_ADDRESS = "EQDtDojKIWgJZvK7MpIx2nv6Q6EUJ5wUldvcwlRuGFOhG2F6"
+TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732" # Ваш Toncenter API ключ
+# Используем JETTON_ROOT_ADDRESS из вашего примера ответа. Замените при необходимости.
+JETTON_ROOT_ADDRESS = "0:F791C89405D4F0D146E10320523604E730FBCB5B6493D3FC3BCE80D8B9A54280"
 MIN_TOKEN_AMOUNT = 10000000
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
-INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy" # Замените ссылку
+INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"  # Ваша ссылка для вступления
 
-# Подключение к SQLite
-# ВНИМАНИЕ: На Koyeb/Heroku после редеплоя файл users.db пропадет. Нужно персистентное хранилище или внешний DB.
+# Подключение к SQLite (данные потеряются после редеплоя на эфемерном хостинге)
 conn = sqlite3.connect('users.db', check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -114,10 +113,8 @@ def check_command(update: Update, context: CallbackContext):
         update.message.reply_text("Баланс ниже минимального. Пополните и попробуйте ещё раз.")
 
 def check_balance_for_user(owner_address: str) -> bool:
-    # Запрос к Toncenter v3 API для получения jetton wallet'а и баланса напрямую.
-    # Документация: GET /api/v3/jetton/wallets?jetton=<>&owner=<>&limit=1
-    # Если найдём кошелёк, возьмём оттуда баланс.
-
+    # Если ваш адрес в base64 (UQ...) формате, возможно нужно конвертировать его в формtat "0:<HEX>"
+    # Попытайтесь использовать owner_address как есть. Если Toncenter не найдёт кошелек, нужно конвертировать адрес.
     url = "https://toncenter.com/api/v3/jetton/wallets"
     params = {
         "jetton": JETTON_ROOT_ADDRESS,
@@ -127,18 +124,16 @@ def check_balance_for_user(owner_address: str) -> bool:
     }
     r = requests.get(url, params=params, timeout=10)
     data = r.json()
-    # Предполагается, что data['wallets'] - массив кошельков
-    wallets = data.get("wallets", [])
-    if not wallets:
-        # Нет кошелька - нет токенов
+
+    jetton_wallets = data.get("jetton_wallets", [])
+    if not jetton_wallets:
         return False
 
-    # Предположим wallets[0]['balance'] - строка с балансом в атомарных единицах.
-    raw_balance_str = wallets[0].get("balance", "0")
-    # balance строка, нужно int
+    raw_balance_str = jetton_wallets[0].get("balance", "0")
     raw_balance = int(raw_balance_str)
     decimals = 9
     balance = raw_balance / (10**decimals)
+
     return balance >= MIN_TOKEN_AMOUNT
 
 def status_command(update: Update, context: CallbackContext):
@@ -194,7 +189,6 @@ def debug_command(update: Update, context: CallbackContext):
     else:
         report.append("TON API ключ: ОШИБКА")
 
-    # Проверим доступ к Toncenter v3 API
     r = requests.get("https://toncenter.com/api/v3/masterchainInfo", params={"api_key": TON_API_KEY}, timeout=5)
     if r.status_code == 200:
         report.append("Toncenter API доступ: OK")
@@ -239,7 +233,6 @@ def faq_handler(update: Update, context: CallbackContext):
         )
 
 def check_balances(context: CallbackContext):
-    # Можно реализовать периодическую проверку, если нужно
     pass
 
 def delete_webhook_before_polling(updater):
@@ -249,7 +242,8 @@ def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    delete_webhook_before_polling(updater)
+    # Удаляем вебхук, если он был установлен, чтобы избежать conflict
+    updater.bot.delete_webhook()
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("addwallet", addwallet))
