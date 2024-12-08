@@ -9,7 +9,7 @@ TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"
 TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"
 JETTON_ROOT_ADDRESS = "EQDtDojKIWgJZvK7MpIx2nv6Q6EUJ5wUldvcwlRuGFOhG2F6"
 MIN_TOKEN_AMOUNT = 10000000
-GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
+GROUP_CHAT_ID = -1001234567890  # Замените на ваш реальный ID группы
 INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"
 
 conn = sqlite3.connect('users.db', check_same_thread=False)
@@ -73,6 +73,12 @@ def addwallet(update: Update, context: CallbackContext):
     """, (user_id, GROUP_CHAT_ID, wallet, None, None, username))
     conn.commit()
 
+    # Добавляем пользователя в known_users, чтобы он был виден при /status
+    cursor.execute("SELECT 1 FROM known_users WHERE user_id=? AND group_id=?", (user_id, GROUP_CHAT_ID))
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO known_users (user_id, group_id, username) VALUES (?,?,?)", (user_id, GROUP_CHAT_ID, username))
+        conn.commit()
+
     balance_ok = check_balance_for_user(wallet)
     if balance_ok:
         update.message.reply_text(
@@ -106,8 +112,6 @@ def check_command(update: Update, context: CallbackContext):
         update.message.reply_text("Баланс по-прежнему ниже минимального. Пополните и попробуйте ещё раз.")
 
 def check_balance_for_user(ton_address: str) -> bool:
-    # Проверка баланса через get_wallet_address
-    # Упрощение: если jetton_wallet_addr возвращает непустой tvm_cell, считаем, что баланс ≥ MIN_TOKEN_AMOUNT.
     try:
         params = {
             "address": JETTON_ROOT_ADDRESS,
@@ -126,7 +130,7 @@ def check_balance_for_user(ton_address: str) -> bool:
             return False
 
         entry = stack[0]
-        # Если это ["tvm_cell", ...] и cell не пустая — считаем кошелек инициализированным => баланс достаточный
+        # Если есть tvm_cell и она не пустая, считаем кошелек инициализирован => баланс достаточный
         if entry[0] == "tvm_cell" and entry[1] and len(entry[1]) > 10:
             return True
         else:
@@ -189,7 +193,7 @@ def debug_command(update: Update, context: CallbackContext):
         report.append("TON API ключ: ОШИБКА")
 
     try:
-        r = requests.get("https://toncenter.com/api/v2/getStats", params={"api_key": TON_API_KEY}, timeout=5)
+        r = requests.get("https://toncenter.com/api/v2/getMasterchainInfo", params={"api_key": TON_API_KEY}, timeout=5)
         if r.status_code == 200:
             report.append("Toncenter API доступ: OK")
         else:
