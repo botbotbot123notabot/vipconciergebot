@@ -12,9 +12,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Замените на ваш токен
-TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"  # Ваш Toncenter API ключ
-JETTON_ROOT_ADDRESS = "0:F791C89405D4F0D146E10320523604E730FBCB5B6493D3FC3BCE80D8B9A54280"  # Корректный jetton root address
+TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # Замените на ваш токен
+TON_API_KEY = "YOUR_TONCENTER_API_KEY"  # Замените на ваш Toncenter API ключ
+JETTON_ROOT_ADDRESS = "0:ed0e88ca21680966f2bb329231da7bfa43a114279c1495dbdcc2546e1853a11b"  # Ваш Jetton Root Address в raw формате
 MIN_TOKEN_AMOUNT = 10000000  # 10,000,000 токенов
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
 INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"  # Ваша ссылка для вступления
@@ -268,17 +268,24 @@ def faq_handler(update: Update, context: CallbackContext):
 
 def check_balances(context: CallbackContext):
     # Периодическая проверка балансов пользователей
-    cursor.execute("SELECT ton_address FROM users WHERE group_id = ?", (GROUP_CHAT_ID,))
+    cursor.execute("SELECT ton_address, user_id FROM users WHERE group_id = ?", (GROUP_CHAT_ID,))
     wallets = cursor.fetchall()
-    for (wallet,) in wallets:
+    for wallet, user_id in wallets:
         balance_ok = check_balance_for_user(wallet)
         if balance_ok:
-            # Найдено достаточное количество токенов, отправить уведомление (можно настроить)
             logger.info(f"Balance OK for wallet {wallet}")
-            # Здесь можно реализовать отправку уведомления пользователю
+            # Можно отправить сообщение пользователю, если баланс стал достаточным
+            try:
+                context.bot.send_message(chat_id=user_id, text=f"Ваш баланс токенов теперь достаточен для вступления в группу!\n{INVITE_LINK}")
+            except Exception as e:
+                logger.error(f"Error sending message to user {user_id}: {e}")
         else:
             logger.info(f"Balance insufficient for wallet {wallet}")
-            # Здесь можно реализовать отправку предупреждения пользователю
+            # Можно отправить предупреждение пользователю, если баланс ниже
+            try:
+                context.bot.send_message(chat_id=user_id, text="Ваш баланс токенов всё ещё ниже необходимого. Пожалуйста, пополните баланс.")
+            except Exception as e:
+                logger.error(f"Error sending message to user {user_id}: {e}")
 
 def main():
     updater = Updater(TOKEN, use_context=True)
