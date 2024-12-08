@@ -9,9 +9,10 @@ TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"
 TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"
 JETTON_ROOT_ADDRESS = "EQDtDojKIWgJZvK7MpIx2nv6Q6EUJ5wUldvcwlRuGFOhG2F6"
 MIN_TOKEN_AMOUNT = 10000000
-GROUP_CHAT_ID = -1001234567890  # Замените на ваш реальный ID группы
+GROUP_CHAT_ID = -4631633778  # Обновлённый ID вашей группы
 INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"
 
+# Подключение к SQLite
 conn = sqlite3.connect('users.db', check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -239,7 +240,7 @@ def faq_handler(update: Update, context: CallbackContext):
         )
 
 def check_balances(context: CallbackContext):
-    # Здесь можно реализовать логику периодической проверки балансов, если нужно
+    # Можно реализовать логику периодической проверки баланса, если нужно
     pass
 
 def delete_webhook_before_polling(updater):
