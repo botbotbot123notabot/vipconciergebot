@@ -3,14 +3,16 @@ from telegram import Update
 import sqlite3
 import requests
 import time
+from ton import tl
+from ton.utils import Address
 
 # Конфигурация
-TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"
-TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"
+TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Замените на ваш токен бота
+TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732" # Замените на ваш Toncenter API key
 JETTON_ROOT_ADDRESS = "EQDtDojKIWgJZvK7MpIx2nv6Q6EUJ5wUldvcwlRuGFOhG2F6"
 MIN_TOKEN_AMOUNT = 10000000
-GROUP_CHAT_ID = -4631633778  # Обновлённый ID вашей группы
-INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"
+GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
+INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy" # Замените на вашу ссылку для вступления
 
 # Подключение к SQLite
 conn = sqlite3.connect('users.db', check_same_thread=False)
@@ -112,31 +114,81 @@ def check_command(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("Баланс по-прежнему ниже минимального. Пополните и попробуйте ещё раз.")
 
+def decode_wallet_address_from_cell(cell_b64: str) -> str:
+    # Декодируем base64 cell в Bytes, затем распаковываем BOC
+    cell_data = tl.deserialize_boc(bytes.fromhex(tl.b64str_to_hex(cell_b64)))
+    root_cell = cell_data[0]
+
+    # Адрес хранится в первом рефе root_cell
+    if len(root_cell.refs) == 0:
+        return None
+
+    addr_cell = root_cell.refs[0]
+    slice_ = addr_cell.begin_parse()
+
+    # anycast (1 бит)
+    slice_.skip_bits(1)
+    # type (2 бита)
+    t = slice_.load_uint(2)
+    if t != 2:
+        return None
+    is_bounceable = slice_.load_bit()
+    is_test_only = slice_.load_bit()
+    wc = slice_.load_int(8)
+    addr_hash = slice_.load_bytes(32)
+
+    address = Address(None, wc, addr_hash, is_bounceable=is_bounceable, is_test_only=is_test_only)
+    return address.to_string(True, True, True)
+
+def get_jetton_wallet_address(owner_address: str) -> str:
+    params = {
+        "address": JETTON_ROOT_ADDRESS,
+        "method": "get_wallet_address",
+        "stack": f'["{owner_address}"]',
+        "api_key": TON_API_KEY
+    }
+    r = requests.get("https://toncenter.com/api/v2/runGetMethod", params=params, timeout=10)
+    data = r.json()
+    if not data.get("ok"):
+        return None
+    stack = data.get("result", {}).get("stack", [])
+    if not stack:
+        return None
+    entry = stack[0]
+    if entry[0] == "tvm_cell" and entry[1]:
+        return decode_wallet_address_from_cell(entry[1])
+    return None
+
+def get_jetton_wallet_balance(wallet_address: str) -> float:
+    params = {
+        "address": wallet_address,
+        "method": "get_wallet_data",
+        "api_key": TON_API_KEY
+    }
+    r = requests.get("https://toncenter.com/api/v2/runGetMethod", params=params, timeout=10)
+    data = r.json()
+    if not data.get("ok"):
+        return 0.0
+    stack = data.get("result", {}).get("stack", [])
+    # get_wallet_data обычно возвращает:
+    # 0: balance (num)
+    # 1: owner (slice)
+    # 2: jetton (slice)
+    if len(stack) > 0 and stack[0][0] == "num":
+        raw_balance_str = stack[0][1]
+        raw_balance = int(raw_balance_str)
+        decimals = 9
+        balance = raw_balance / (10**decimals)
+        return balance
+    return 0.0
+
 def check_balance_for_user(ton_address: str) -> bool:
     try:
-        params = {
-            "address": JETTON_ROOT_ADDRESS,
-            "method": "get_wallet_address",
-            "stack": f'["{ton_address}"]',
-            "api_key": TON_API_KEY
-        }
-        r = requests.get("https://toncenter.com/api/v2/runGetMethod", params=params, timeout=10)
-        data = r.json()
-
-        if not data.get("ok"):
+        jetton_wallet_addr = get_jetton_wallet_address(ton_address)
+        if not jetton_wallet_addr:
             return False
-
-        stack = data.get("result", {}).get("stack", [])
-        if not stack:
-            return False
-
-        entry = stack[0]
-        # Если есть tvm_cell и она не пустая, считаем кошелек инициализирован => баланс достаточный
-        if entry[0] == "tvm_cell" and entry[1] and len(entry[1]) > 10:
-            return True
-        else:
-            return False
-
+        balance = get_jetton_wallet_balance(jetton_wallet_addr)
+        return balance >= MIN_TOKEN_AMOUNT
     except:
         return False
 
