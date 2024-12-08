@@ -3,18 +3,17 @@ from telegram import Update
 import sqlite3
 import requests
 import time
-from ton import tl
-from ton.utils import Address
 
 # Конфигурация
-TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Замените на ваш токен бота
-TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732" # Замените на ваш Toncenter API key
+TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Замените на ваш токен
+TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732" # Замените на ваш ключ
 JETTON_ROOT_ADDRESS = "EQDtDojKIWgJZvK7MpIx2nv6Q6EUJ5wUldvcwlRuGFOhG2F6"
 MIN_TOKEN_AMOUNT = 10000000
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
-INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy" # Замените на вашу ссылку для вступления
+INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy" # Замените ссылку
 
 # Подключение к SQLite
+# ВНИМАНИЕ: На Koyeb/Heroku после редеплоя файл users.db пропадет. Нужно персистентное хранилище или внешний DB.
 conn = sqlite3.connect('users.db', check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -48,13 +47,12 @@ def is_admin_in_group(context: CallbackContext, user_id: int, group_id: int) -> 
 
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
-        f"Здравствуйте! Я ваш персональный VIP-консьерж, готовый помочь вам проверить наличие достаточного количества токенов для вступления в нашу приватную группу.\n\n"
+        f"Здравствуйте! Я ваш персональный VIP-консьерж, готовый помочь проверить наличие достаточного количества токенов для вступления в нашу приватную группу.\n\n"
         f"На данный момент для вступления требуется иметь не менее {MIN_TOKEN_AMOUNT} токенов.\n\n"
-        f"Вы можете приобрести необходимое количество на DEX-биржах или через Blum.\n\n"
-        f"Для начала, пожалуйста, привяжите свой TON-кошелёк, отправив мне в личных сообщениях команду:\n"
+        f"Вы можете приобрести необходимые токены на DEX-биржах или через Blum.\n\n"
+        f"Сначала привяжите свой TON-кошелёк, отправив в ЛС боту команду:\n"
         f"/addwallet <TON_wallet>\n\n"
-        f"После этого вы сможете использовать команду /check, чтобы узнать, достигли ли вы необходимого баланса. "
-        f"Если всё в порядке, я сразу же предоставлю вам ссылку для вступления в группу!"
+        f"После этого используйте /check для повторной проверки баланса. Если всё в порядке, я предоставлю ссылку для вступления!"
     )
 
 def addwallet(update: Update, context: CallbackContext):
@@ -76,10 +74,11 @@ def addwallet(update: Update, context: CallbackContext):
     """, (user_id, GROUP_CHAT_ID, wallet, None, None, username))
     conn.commit()
 
-    # Добавляем пользователя в known_users, чтобы он был виден при /status
+    # Добавим пользователя в known_users
     cursor.execute("SELECT 1 FROM known_users WHERE user_id=? AND group_id=?", (user_id, GROUP_CHAT_ID))
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO known_users (user_id, group_id, username) VALUES (?,?,?)", (user_id, GROUP_CHAT_ID, username))
+        cursor.execute("INSERT INTO known_users (user_id, group_id, username) VALUES (?,?,?)",
+                       (user_id, GROUP_CHAT_ID, username))
         conn.commit()
 
     balance_ok = check_balance_for_user(wallet)
@@ -108,89 +107,39 @@ def check_command(update: Update, context: CallbackContext):
     balance_ok = check_balance_for_user(wallet)
     if balance_ok:
         update.message.reply_text(
-            "Отлично! Ваш баланс теперь соответствует минимальному количеству токенов.\n"
+            "Отлично! Ваш баланс соответствует минимальному количеству токенов.\n"
             f"Вот ваша ссылка для вступления: {INVITE_LINK}"
         )
     else:
-        update.message.reply_text("Баланс по-прежнему ниже минимального. Пополните и попробуйте ещё раз.")
+        update.message.reply_text("Баланс ниже минимального. Пополните и попробуйте ещё раз.")
 
-def decode_wallet_address_from_cell(cell_b64: str) -> str:
-    # Декодируем base64 cell в Bytes, затем распаковываем BOC
-    cell_data = tl.deserialize_boc(bytes.fromhex(tl.b64str_to_hex(cell_b64)))
-    root_cell = cell_data[0]
+def check_balance_for_user(owner_address: str) -> bool:
+    # Запрос к Toncenter v3 API для получения jetton wallet'а и баланса напрямую.
+    # Документация: GET /api/v3/jetton/wallets?jetton=<>&owner=<>&limit=1
+    # Если найдём кошелёк, возьмём оттуда баланс.
 
-    # Адрес хранится в первом рефе root_cell
-    if len(root_cell.refs) == 0:
-        return None
-
-    addr_cell = root_cell.refs[0]
-    slice_ = addr_cell.begin_parse()
-
-    # anycast (1 бит)
-    slice_.skip_bits(1)
-    # type (2 бита)
-    t = slice_.load_uint(2)
-    if t != 2:
-        return None
-    is_bounceable = slice_.load_bit()
-    is_test_only = slice_.load_bit()
-    wc = slice_.load_int(8)
-    addr_hash = slice_.load_bytes(32)
-
-    address = Address(None, wc, addr_hash, is_bounceable=is_bounceable, is_test_only=is_test_only)
-    return address.to_string(True, True, True)
-
-def get_jetton_wallet_address(owner_address: str) -> str:
+    url = "https://toncenter.com/api/v3/jetton/wallets"
     params = {
-        "address": JETTON_ROOT_ADDRESS,
-        "method": "get_wallet_address",
-        "stack": f'["{owner_address}"]',
+        "jetton": JETTON_ROOT_ADDRESS,
+        "owner": owner_address,
+        "limit": 1,
         "api_key": TON_API_KEY
     }
-    r = requests.get("https://toncenter.com/api/v2/runGetMethod", params=params, timeout=10)
+    r = requests.get(url, params=params, timeout=10)
     data = r.json()
-    if not data.get("ok"):
-        return None
-    stack = data.get("result", {}).get("stack", [])
-    if not stack:
-        return None
-    entry = stack[0]
-    if entry[0] == "tvm_cell" and entry[1]:
-        return decode_wallet_address_from_cell(entry[1])
-    return None
-
-def get_jetton_wallet_balance(wallet_address: str) -> float:
-    params = {
-        "address": wallet_address,
-        "method": "get_wallet_data",
-        "api_key": TON_API_KEY
-    }
-    r = requests.get("https://toncenter.com/api/v2/runGetMethod", params=params, timeout=10)
-    data = r.json()
-    if not data.get("ok"):
-        return 0.0
-    stack = data.get("result", {}).get("stack", [])
-    # get_wallet_data обычно возвращает:
-    # 0: balance (num)
-    # 1: owner (slice)
-    # 2: jetton (slice)
-    if len(stack) > 0 and stack[0][0] == "num":
-        raw_balance_str = stack[0][1]
-        raw_balance = int(raw_balance_str)
-        decimals = 9
-        balance = raw_balance / (10**decimals)
-        return balance
-    return 0.0
-
-def check_balance_for_user(ton_address: str) -> bool:
-    try:
-        jetton_wallet_addr = get_jetton_wallet_address(ton_address)
-        if not jetton_wallet_addr:
-            return False
-        balance = get_jetton_wallet_balance(jetton_wallet_addr)
-        return balance >= MIN_TOKEN_AMOUNT
-    except:
+    # Предполагается, что data['wallets'] - массив кошельков
+    wallets = data.get("wallets", [])
+    if not wallets:
+        # Нет кошелька - нет токенов
         return False
+
+    # Предположим wallets[0]['balance'] - строка с балансом в атомарных единицах.
+    raw_balance_str = wallets[0].get("balance", "0")
+    # balance строка, нужно int
+    raw_balance = int(raw_balance_str)
+    decimals = 9
+    balance = raw_balance / (10**decimals)
+    return balance >= MIN_TOKEN_AMOUNT
 
 def status_command(update: Update, context: CallbackContext):
     if not is_admin_in_group(context, update.effective_user.id, GROUP_CHAT_ID):
@@ -245,14 +194,12 @@ def debug_command(update: Update, context: CallbackContext):
     else:
         report.append("TON API ключ: ОШИБКА")
 
-    try:
-        r = requests.get("https://toncenter.com/api/v2/getMasterchainInfo", params={"api_key": TON_API_KEY}, timeout=5)
-        if r.status_code == 200:
-            report.append("Toncenter API доступ: OK")
-        else:
-            report.append(f"Toncenter API доступ: ОШИБКА код {r.status_code}")
-    except Exception as e:
-        report.append(f"Toncenter API доступ: ОШИБКА {e}")
+    # Проверим доступ к Toncenter v3 API
+    r = requests.get("https://toncenter.com/api/v3/masterchainInfo", params={"api_key": TON_API_KEY}, timeout=5)
+    if r.status_code == 200:
+        report.append("Toncenter API доступ: OK")
+    else:
+        report.append(f"Toncenter API доступ: ОШИБКА код {r.status_code}")
 
     if all("OK" in x for x in report):
         report.append("Работа стабильна и все хорошо!")
@@ -292,7 +239,7 @@ def faq_handler(update: Update, context: CallbackContext):
         )
 
 def check_balances(context: CallbackContext):
-    # Можно реализовать логику периодической проверки баланса, если нужно
+    # Можно реализовать периодическую проверку, если нужно
     pass
 
 def delete_webhook_before_polling(updater):
