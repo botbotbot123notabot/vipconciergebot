@@ -1,4 +1,5 @@
 import logging
+import os
 from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
 from telegram import Update
 import sqlite3
@@ -14,12 +15,13 @@ logger = logging.getLogger(__name__)
 # Конфигурация
 TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Ваш Telegram Bot Token
 TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"  # Ваш TonAPI Key
-JETTON_ROOT_ADDRESS = "0:F791C89405D4F0D146E10320523604E730FBCB5B6493D3FC3BCE80D8B9A54280"  # Ваш Jetton Root Address в raw формате
+JETTON_ROOT_ADDRESS = "0:ed0e88ca21680966f2bb329231da7bfa43a114279c1495dbdcc2546e1853a11b"  # Ваш Jetton Root Address в raw формате
 MIN_TOKEN_AMOUNT = 10000000  # 10,000,000 токенов
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
 INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"  # Ваша ссылка для вступления
+ADMIN_CHAT_ID = 687198654  # Замените на ваш Telegram ID для получения уведомлений об ошибках
 
-# Подключение к SQLite (на Heroku данные не сохраняются)
+# Подключение к SQLite (на Heroku данные не сохраняются, рекомендуется использовать PostgreSQL)
 conn = sqlite3.connect('users.db', check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -78,18 +80,23 @@ def addwallet(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     username = update.message.from_user.username or update.message.from_user.first_name
 
+    # Проверка формата адреса (должен начинаться с '0:')
+    if not wallet.startswith("0:"):
+        update.message.reply_text("Неверный формат адреса кошелька. Пожалуйста, используйте raw формат: 0:<HEX>...")
+        return
+
     logger.info(f"Adding/updating wallet for user_id={user_id}: {wallet}")
 
     cursor.execute("""
     INSERT OR REPLACE INTO users (user_id, group_id, ton_address, warning_time, last_balance, username)
-    VALUES (?,?,?,?,?,?)
+    VALUES (?, ?, ?, ?, ?, ?)
     """, (user_id, GROUP_CHAT_ID, wallet, None, None, username))
     conn.commit()
 
     # Добавим пользователя в known_users
     cursor.execute("SELECT 1 FROM known_users WHERE user_id=? AND group_id=?", (user_id, GROUP_CHAT_ID))
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO known_users (user_id, group_id, username) VALUES (?,?,?)",
+        cursor.execute("INSERT INTO known_users (user_id, group_id, username) VALUES (?, ?, ?)",
                        (user_id, GROUP_CHAT_ID, username))
         conn.commit()
 
@@ -271,33 +278,51 @@ def check_balances(context: CallbackContext):
     # Периодическая проверка балансов пользователей
     cursor.execute("SELECT ton_address, user_id FROM users WHERE group_id = ?", (GROUP_CHAT_ID,))
     wallets = cursor.fetchall()
-    for wallet, user_id in wallets:
-        balance_ok = check_balance_for_user(wallet)
+    for wallet in wallets:
+        ton_address = wallet[0]
+        user_id = wallet[1]
+        balance_ok = check_balance_for_user(ton_address)
         if balance_ok:
-            logger.info(f"Balance OK for wallet {wallet}")
+            logger.info(f"Balance OK for wallet {ton_address}")
             # Отправка сообщения пользователю, если баланс стал достаточным
             try:
                 context.bot.send_message(chat_id=user_id, text=f"Ваш баланс токенов теперь достаточен для вступления в группу!\n{INVITE_LINK}")
             except Exception as e:
                 logger.error(f"Error sending message to user {user_id}: {e}")
         else:
-            logger.info(f"Balance insufficient for wallet {wallet}")
+            logger.info(f"Balance insufficient for wallet {ton_address}")
             # Отправка предупреждения пользователю, если баланс ниже
             try:
                 context.bot.send_message(chat_id=user_id, text="Ваш баланс токенов всё ещё ниже необходимого. Пожалуйста, пополните баланс.")
             except Exception as e:
                 logger.error(f"Error sending message to user {user_id}: {e}")
 
+def error_handler(update: Update, context: CallbackContext):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    # Отправка сообщения админу
+    try:
+        context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Ошибка: {context.error}")
+    except Exception as e:
+        logger.error(f"Error sending error message to admin: {e}")
+
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    # Удаляем вебхук, если он был установлен, чтобы избежать conflict
-    try:
-        updater.bot.delete_webhook()
-        logger.info("Webhook deleted successfully.")
-    except Exception as e:
-        logger.error(f"Error deleting webhook: {e}")
+    # Добавляем обработчик ошибок
+    dp.add_error_handler(error_handler)
+
+    # Устанавливаем Webhook (Рекомендуется для Heroku)
+    # Замените <YOUR_HEROKU_APP_NAME> на фактическое имя вашего приложения на Heroku
+    HEROKU_APP_NAME = "your-heroku-app-name"  # Замените на имя вашего приложения
+    webhook_url = f"https://{HEROKU_APP_NAME}.herokuapp.com/{TOKEN}"
+    updater.start_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get('PORT', 8443)),
+        url_path=TOKEN
+    )
+    updater.bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
 
     # Добавляем хендлеры
     dp.add_handler(CommandHandler("start", start))
@@ -313,9 +338,9 @@ def main():
     job_queue = updater.job_queue
     job_queue.run_repeating(check_balances, interval=1800, first=10)  # каждые 30 минут
 
-    # Запуск polling
-    updater.start_polling()
-    logger.info("Bot started polling.")
+    # Запуск Webhook
+    updater.start_webhook()
+    logger.info("Bot started with Webhook.")
     updater.idle()
 
 if __name__ == '__main__':
