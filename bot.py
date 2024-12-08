@@ -12,8 +12,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # Замените на ваш токен
-TON_API_KEY = "YOUR_TONCENTER_API_KEY"  # Замените на ваш Toncenter API ключ
+TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Ваш Telegram Bot Token
+TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"  # Ваш TonAPI Key
 JETTON_ROOT_ADDRESS = "0:ed0e88ca21680966f2bb329231da7bfa43a114279c1495dbdcc2546e1853a11b"  # Ваш Jetton Root Address в raw формате
 MIN_TOKEN_AMOUNT = 10000000  # 10,000,000 токенов
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
@@ -39,7 +39,8 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS known_users (
     user_id INTEGER,
     group_id INTEGER,
-    username TEXT
+    username TEXT,
+    PRIMARY KEY (user_id, group_id)
 )
 """)
 conn.commit()
@@ -274,14 +275,14 @@ def check_balances(context: CallbackContext):
         balance_ok = check_balance_for_user(wallet)
         if balance_ok:
             logger.info(f"Balance OK for wallet {wallet}")
-            # Можно отправить сообщение пользователю, если баланс стал достаточным
+            # Отправка сообщения пользователю, если баланс стал достаточным
             try:
                 context.bot.send_message(chat_id=user_id, text=f"Ваш баланс токенов теперь достаточен для вступления в группу!\n{INVITE_LINK}")
             except Exception as e:
                 logger.error(f"Error sending message to user {user_id}: {e}")
         else:
             logger.info(f"Balance insufficient for wallet {wallet}")
-            # Можно отправить предупреждение пользователю, если баланс ниже
+            # Отправка предупреждения пользователю, если баланс ниже
             try:
                 context.bot.send_message(chat_id=user_id, text="Ваш баланс токенов всё ещё ниже необходимого. Пожалуйста, пополните баланс.")
             except Exception as e:
