@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Конфигурация
 TOKEN = "8085122191:AAEaej7Ara5GU6spLPVaNrUTQ7itN9ImK_c"  # Ваш Telegram Bot Token
 TON_API_KEY = "0e10f6af497956d661e37858bd6a3c11f022ab3387e3cad0f30a99200e6e4732"  # Ваш TonAPI Key
-JETTON_ROOT_ADDRESS = "0:ed0e88ca21680966f2bb329231da7bfa43a114279c1495dbdcc2546e1853a11b"  # Ваш Jetton Root Address в raw формате
+JETTON_ROOT_ADDRESS = "0:F791C89405D4F0D146E10320523604E730FBCB5B6493D3FC3BCE80D8B9A54280"  # Ваш Jetton Root Address в raw формате
 MIN_TOKEN_AMOUNT = 10000000  # 10,000,000 токенов
 GROUP_CHAT_ID = -4631633778  # Замените на ваш реальный ID группы
 INVITE_LINK = "https://t.me/+gsHU_oQ-JhNhYmMy"  # Ваша ссылка для вступления
