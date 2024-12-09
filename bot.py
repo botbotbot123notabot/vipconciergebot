@@ -1,7 +1,7 @@
 import logging
 import os
 from telegram import Update, Sticker
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler
 
 # Конфигурация логирования
 LOG_FILE = "bot.log"
@@ -95,6 +95,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Обработка ошибок."""
     logger.error(msg="Произошла ошибка при обработке обновления:", exc_info=context.error)
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await update.message.reply_text(f"Привет, {user.first_name}! Я готов считать стикеры.")
+
 def main():
     global current_streak, record
     current_streak = 0
@@ -109,6 +113,10 @@ def main():
     except Exception as e:
         logger.critical(f"Не удалось инициализировать бота: {e}")
         return
+
+    # Обработчик команды /start
+    application.add_handler(CommandHandler("start", start))
+    logger.debug("Обработчик команды /start добавлен.")
 
     # Обработчик всех сообщений
     application.add_handler(MessageHandler(filters.ALL, handle_message))
