@@ -100,12 +100,8 @@ def main():
     current_streak = 0
     record = get_record()
 
-    # Замените 'YOUR_BOT_TOKEN' на ваш новый токен бота
-    BOT_TOKEN = 'YOUR_NEW_BOT_TOKEN'
-
-    if BOT_TOKEN == 'YOUR_NEW_BOT_TOKEN':
-        logger.critical("Токен бота не установлен. Завершение работы.")
-        return
+    # Вставка вашего токена бота
+    BOT_TOKEN = '7794929885:AAHDiG47EN6wA250uWkvi0J1_JTWgCw-23g'
 
     try:
         application = ApplicationBuilder().token(BOT_TOKEN).build()
